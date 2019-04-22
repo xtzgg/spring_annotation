@@ -1,0 +1,302 @@
+#============以下主要是粗细粒度的服务网关==========start===================================
+#1 所有的服务都将被忽略，除了为users。
+#zuul:
+#  ignoredServices: '*'
+#  routes:
+#    users: /myusers/**
+
+#2 要对路由进行更细粒度的控制，可以单独指定路径和serviceId；通过path路径来访问serviceId的服务接口
+#zuul:
+#  routes:
+#    users:
+#      path: /myusers/**
+#      serviceId: users_service
+
+# 3 可以指定为一个serviceId（用于发现服务）或一个url（用于物理位置），如以下示例所示：
+#zuul:
+#  routes:
+#    users:
+#      path: /myusers/**
+#      url: https://example.com/users_service
+#===================================================end======================
+
+# =============以下是对zuul熔断和负载均衡进行指定方式============================================================
+# 4 以上这些简单的url-routes不会作为一个HystrixCommand执行，也不会使用Ribbon对多个URL进行负载平衡。
+# 要实现这些目标，您可以使用serviceId静态服务器列表指定 ，如下所示：
+#zuul:
+#  routes:
+#    echo:
+#      path: /myusers/**
+#      serviceId: myusers-service
+#      stripPrefix: true
+#
+#hystrix:
+#  command:
+#    myusers-service:
+#      execution:
+#        isolation:
+#          thread:
+#            timeoutInMilliseconds: ...
+#
+#myusers-service:
+#  ribbon:
+#    NIWSServerListClassName: com.netflix.loadbalancer.ConfigurationBasedServerList
+#    listOfServers: https://example1.com,http://example2.com
+#    ConnectTimeout: 1000
+#    ReadTimeout: 3000
+#    MaxTotalHttpConnections: 500
+#    MaxConnectionsPerHost: 100
+
+# 5 另一种方法是指定服务路由并为其配置Ribbon客户端serviceId（这样做需要在Ribbon中禁用Eureka支持 - 请参阅上面的更多信息），
+#如以下示例所示：
+#zuul:
+#  routes:
+#    users:
+#      path: /myusers/**
+#      serviceId: users
+#
+#ribbon:
+#  eureka:
+#    enabled: false
+#
+#users:
+#  ribbon:
+#    listOfServers: example.com,google.com
+
+#======================================end==========================================
+
+#======================指定路由serviceID的正则规则==================================================
+# 6 使用提供serviceId路径和路线之间的约定regexmapper。
+#它使用正则表达式命名组从中提取变量serviceId并将其注入路由模式，如以下示例所示：
+#  @Bean
+#  public PatternServiceRouteMapper serviceRouteMapper() {
+#  return new PatternServiceRouteMapper(
+#  "(?<name>^.+)-(?<version>v.+$)",
+#  "${version}/${name}");
+#}
+
+#========================指定所有映射服务前缀===================================================
+# 7要为所有映射添加前缀，请设置zuul.prefix为值，例如/api。默认情况下，在请求转发之前，会从请求中删除代理前缀
+#（您可以关闭此行为zuul.stripPrefix=false）。您还可以关闭从各个路由中剥离特定于服务的前缀，如以下示例所示：
+#zuul:
+#  routes:
+#    users:
+#      path: /myusers/**
+#      stripPrefix: false
+# 注：	zuul.stripPrefix仅适用于设置的前缀zuul.prefix。它对给定路径中定义的前缀path没有任何影响。
+
+#===================失败自动重试设置=======================================================
+
+#在前面的例子中，请求/myusers/101被转发到/myusers/101的users服务。
+
+#zuul.routes的条目实际上结合到ZuulProperties类型的对象。如果查看该对象的属性，可以看到它还有一个retryable标志。
+#将该标志设置true为让Ribbon客户端自动重试失败的请求。您还可以在需要修改使用客户端配置的重试操作的参
+#数时将该标志设置为true。
+
+#=====================关闭自动设置X-Forwarded-Host到转发请求==========================
+#默认情况下，X-Forwarded-Host标头会添加到转发的请求中。要关闭它，请设置zuul.addProxyHeaders = false。默认情况下，
+#前缀路径被剥离，对后端的请求会获取一个X-Forwarded-Prefix标头（/myusers在前面显示的示例中
+
+#========================所有流量路由到服务home=================================================
+#如果设置了默认路由（/），则应用程序@EnableZuulProxy可以充当独立服务器。
+#例如，zuul.route.home: /将所有流量（“/ **”）路由到“home”服务。
+
+#=======================细粒度忽略：忽略所有服务中带有admin请求路径的内容========================
+#如果需要更细粒度的忽略，则可以指定要忽略的特定模式。这些模式在路径定位过程开始时进行评估，
+#这意味着前缀应包含在模式中以保证匹配。忽略的模式跨越所有服务并取代任何其他路由规范。
+#以下示例显示如何创建忽略的模式：
+#zuul:
+#  ignoredPatterns: /**/admin/**
+#  routes:
+#    users: /myusers/**
+# 注：前面的例子是指所有的请求（例如/myusers/101）被转发到/101对users服务。但是，请求包括/admin/不解决。
+
+#=============配置顺序影响生效问题===============================================================
+#如果您需要路由保留其顺序，则需要使用YAML文件，因为使用Properties文件时排序会丢失。以下示例显示了这样的YAML文件：
+#zuul:
+#  routes:
+#    users:
+#      path: /myusers/**
+#    legacy:
+#      path: /**
+# 注：如果您要使用属性文件，则legacy路径可能最终位于users 路径前面，从而使users路径无法访问。
+
+#==============================略 Zuul Http客户端 可以查阅文档==============================================
+
+#======================Cookie和敏感标题======================================================
+# 1 您可以在同一系统中的服务之间共享标头，但您可能不希望敏感标头向下游泄漏到外部服务器。您可以在路由配置中指定忽略的标头列表
+#可以将敏感标头配置为每个路由的逗号分隔列表，如以下示例所示：
+#zuul:
+#  routes:
+#    users:
+#      path: /myusers/**
+#      sensitiveHeaders: Cookie,Set-Cookie,Authorization
+#      url: https://downstream
+# 注：	这是默认值sensitiveHeaders，因此除非您希望它不同，否则无需进行设置。
+# 这是Spring Cloud Netflix 1.1中的新功能（在1.0中，用户无法控制标题，并且所有Cookie都在两个方向上流动）。
+
+# 2 该sensitiveHeaders是一个黑名单，默认是不为空。因此，要使Zuul发送所有标头（除了ignored那些标头），
+#您必须将其明确设置为空列表。如果要将cookie或授权标头传递给后端，则必须这样做。
+#以下示例显示如何使用sensitiveHeaders：
+#zuul:
+#  routes:
+#    users:
+#      path: /myusers/**
+#      sensitiveHeaders:
+#      url: https://downstream
+
+#================管理端点===============end point=============================================
+#默认情况下，如果使用@EnableZuulProxySpring Boot Actuator，则启用另外两个端点：
+#Routes
+#Filters
+# 1 路由端点
+# 对路由端点的GET /routes返回映射路由的列表：GET /routes
+#{
+#  /stores/**: "http://localhost:8081"
+#}
+# 2 可以通过添加?format=details查询字符串来请求其他路由详细信息/routes。这样做会产生以下输出：
+# GET /routes/details
+#{
+#  "/stores/**": {
+#    "id": "stores",
+#    "fullPath": "/stores/**",
+#    "location": "http://localhost:8081",
+#    "path": "/**",
+#    "prefix": "/stores",
+#    "retryable": false,
+#    "customSensitiveHeaders": false,
+#    "prefixStripped": true
+#  }
+#}
+# 3 对/routes发送POST请求现有路由进行刷新（例如，当在服务目录进行了变更）。
+# 您可以通过设置endpoints.routes.enabled为false禁用此端点。
+# 注：the routes should respond automatically to changes in the service catalog, #路由可以自动改变服务的列表
+# but the POST to /routes is a way to force the change to happen immediately. # 但是post请求可以迫使其马上进行刷新
+
+# 4 Filters Endpoint
+# 一个过滤器端点的get请求，对每种类型的zuul filter，将获得该类型的所有过滤器及其详细信息的列表。
+
+#=============Strangulation Patterns and Local Forwards=========应用如何由老版本向新版本过渡？======================================================
+# 扼杀模式（使其慢慢窒息的方式）：一部分调用老应用，一部分调用新应用。
+# 迁移现有应用程序或API时的一个常见模式是“扼杀”旧端点，慢慢用不同的实现替换它们。
+# Zuul代理是一个有用的工具，因为您可以使用它来处理来自旧端点的客户端的所有流量，但将一些请求重定向到新的端点。
+# 以下示例显示“strangle”方案的配置详细信息：
+#zuul:
+#  routes:
+#    first:
+#      path: /first/**
+#      url: https://first.example.com
+#    second:
+#      path: /second/**
+#      url: forward:/second
+#    third:
+#      path: /third/**
+#      url: forward:/3rd
+#    legacy:
+#      path: /**
+#      url: https://legacy.example.com
+# 在前面的示例中，我们扼杀了“legacy”应用程序，与该应用程序不匹配的所有请求映射到其他模式之一。
+# /first/**已使用外部URL将路径提取到新服务中。/second/**转发路径以便可以在本地处理它们
+#（例如，使用普通的Spring @RequestMapping）。路径/third/**也会被转发但具有不同的前缀（/third/foo转发到/3rd/foo）。
+# The ignored patterns aren’t completely ignored, they just are not handled by the proxy
+# (so they are also effectively forwarded locally).
+
+#=====================Uploading Files through Zuul=====通过zuul来上传文件=======================================
+#如果您使用@EnableZuulProxy，您可以使用代理路径上传文件，只要文件很小，它就可以使用。
+#对于大文件，有一个替代路径绕过Spring DispatcherServlet（以避免多部分processing）在“/ zuul / *”中。
+#换句话说，如果你有zuul.routes.customers=/customers/**，那么你可以将POST大文件/zuul/customers/*。
+# servlet路径穿过zuul.servletPath外部化操作。如果代理路由引导您完成功能区负载平衡器，则极大文件也需要提升超时设置，
+#如以下示例所示：
+#hystrix.command.default.execution.isolation.thread.timeoutInMilliseconds: 60000
+#ribbon:
+#  ConnectTimeout: 3000
+#  ReadTimeout: 60000
+# 注：流式处理，分块编码，略(改地方不是很懂)
+
+#============================查询字符串编码================================================
+#处理传入请求时，将对查询参数进行解码，以便它们可用于Zuul过滤器中的可能修改。
+#然后对它们进行重新编码，在路由过滤器中重建后端请求。如果（例如）
+#使用Javascript encodeURIComponent()方法编码，结果可能与原始输入不同。
+#虽然这在大多数情况下不会引起任何问题，但某些Web服务器可能会因复杂查询字符串的编码而变得挑剔
+
+#要强制查询字符串的原始编码，可以传递一个特殊标志，
+#ZuulProperties以便使用该HttpServletRequest::getQueryString方法按原样获取查询字符串，如以下示例所示：
+#zuul:
+#  forceOriginalQueryStringEncoding: true
+# 注：	这个特殊标志只适用于SimpleHostRoutingFilter。此外，
+# 您无法简单的覆盖查询参数RequestContext.getCurrentContext().setRequestQueryParams(someOverriddenParameters)，
+#因为现在直接在原始查询字符串上提取查询字符串HttpServletRequest。
+
+#======================请求URI编码======================================================
+# 处理传入请求时，请求URI在将它们与路由匹配之前进行解码。然后，在路由过滤器中重建后端请求时，
+# 将重新编码请求URI。如果您的URI包含编码的“/”字符，这可能会导致一些意外的行为。
+
+#要使用原始请求URI，可以将特殊标志传递给'ZuulProperties'，
+#以便URI将按原样采用该HttpServletRequest::getRequestURI方法，如以下示例所示：
+# zuul:
+#  decodeUrl: false
+
+#===========================普通嵌入式Zuul=================================================
+#如果您使用@EnableZuulServer（而不是@EnableZuulProxy），您还可以运行Zuul服务器，
+#而无需代理或有选择地切换代理平台的某些部分。您添加到ZuulFilter类型的应用程序的任何bean都会自动安装
+#（与它们一样@EnableZuulProxy），但不会自动添加任何代理过滤器。
+#在这种情况下，仍然通过配置“zuul.routes.*”来指定进入Zuul服务器的路由，但是没有服务发现和代理。
+#因此，将忽略“serviceId”和“url”设置。以下示例将“/ api / **”中的所有路径映射到Zuul过滤器链：
+#zuul:
+#  routes:
+#    api: /api/**
+
+#==============================禁用Zuul过滤器==============================================
+#Zuul for Spring Cloud ZuulFilter在代理和服务器模式下都默认启用了许多bean。有关可以启用的过滤器列表，
+#请参阅Zuul过滤器包。如果要禁用其中一个，请设置zuul.<SimpleClassName>.<filterType>.disable=true。
+#按照惯例，后面的包filters是Zuul过滤器类型。
+#例如，要禁用org.springframework.cloud.netflix.zuul.filters.post.SendResponseFilter，
+#请设置zuul.SendResponseFilter.post.disable=true。
+
+#==============================为路由提供Hystrix后备=========================================
+#当Zuul中给定路径的电路跳闸时，您可以通过创建类型的bean来提供回退响应FallbackProvider。
+#在此bean中，您需要指定回退所针对的路由ID，并提供ClientHttpResponse返回作为回退。
+#以下示例显示了一个相对简单的FallbackProvider实现：
+# class MyFallbackProvider implements FallbackProvider { .... (程序中已经测试完成)
+
+#以下示例显示了上一个示例的路由配置可能如何显示：
+#zuul:
+#  routes:
+#    customers: /customers/**
+
+#如果要为所有路由提供默认回退，可以创建类型的bean FallbackProvider并使getRoute方法返回*或null，如以下示例所示：
+
+#以上程序中都已经实现
+
+#==================zuul超时========================================
+#如果要为通过Zuul代理的请求配置套接字超时和读取超时，则有两种选择，具体取决于您的配置：
+#如果Zuul使用服务发现，则需要使用ribbon.ReadTimeout和ribbon.SocketTimeout功能区属性配置这些超时 。
+#如果您通过指定URL配置了Zuul路由，则需要使用 zuul.host.connect-timeout-millis和zuul.host.socket-timeout-millis。
+
+#==================后续内容见文档========================================
+# 如何编写预过滤器，路由过滤器，后置过滤器等 (代码中已经实现)
+# zuul抛出异常执行错误过滤器： SendErrorFilter 只有在RequestContext.getThrowable()没有的情况下才会运行null
+
+#==================Zuul Eager应用程序上下文加载========================================
+#Zuul内部使用Ribbon来调用远程URL。默认情况下，Spring Cloud在第一次调用时会延迟加载Ribbon客户端。可以使用以下配置更改Zuul的此行为，
+#这会导致在应用程序启动时急切加载与子功能区相关的应用程序上下文。以下示例显示如何启用预先加载：
+#zuul:
+#  ribbon:
+#    eager-load:
+#      enabled: true
+
+#==================额外内容========================================
+# 非JVM
+# 重试失败的请求和BackOff政策
+
+
+
+
+
+
+
+
+
+
+
+
